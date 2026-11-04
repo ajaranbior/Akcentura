@@ -1,0 +1,9 @@
+{
+  "name": "Akcentura — Polish pronunciation coach",
+  "short_name": "Akcentura",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f6f4ef",
+  "theme_color": "#c8102e",
+  "icons": [{ "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
