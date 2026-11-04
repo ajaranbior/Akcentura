@@ -1,0 +1,11 @@
+{
+  "name": "akcentura",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Polish read-aloud pronunciation coach for Russian and Belarusian speakers",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "python3 -m http.server 8080"
+  }
+}
