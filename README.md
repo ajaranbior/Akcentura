@@ -74,7 +74,7 @@ js/storage.js        local persistence and progress aggregation
 js/texts.js          sample texts
 ```
 
-Deployment: every push to `main` runs the tests and publishes the site to GitHub Pages via `.github/workflows/pages.yml`. If the first deployment fails with a Pages error, open **Settings → Pages** in the repository and set **Source** to **GitHub Actions**, then re-run the workflow.
+Deployment: every push to `main` runs the tests and publishes the site to the `gh-pages` branch via `.github/workflows/pages.yml`; GitHub Pages serves that branch (**Settings → Pages → Deploy from a branch → `gh-pages` / root**).
 
 ### Adding languages
 
