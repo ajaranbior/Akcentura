@@ -286,7 +286,7 @@ export const PATTERNS = [
     category: "vowels",
     symbol: "ą",
     severity: { be: 3, ru: 3 },
-    summary: "ą / ę are nasal: ręka = “renka”, ząb = “zomp”, wąs = nasal o + w, but final ę ≈ e (idę).",
+    summary: "Inside a word ą / ę are nasal (ręka = “renka”, ząb = “zomp”, wąs). A final ę is just e (idę, dziękuję); a final ą stays nasal (idą).",
     why: {
       be: "Belarusian has no nasal vowels, so ą/ę tend to become plain o/e or “on/en” everywhere.",
       ru: "Russian has no nasal vowels, so ą/ę tend to become plain o/e or “on/en” everywhere.",
@@ -294,14 +294,15 @@ export const PATTERNS = [
     howTo: [
       "Before p/b: ą → om, ę → em (dąb, tęp). Before t/d/c/cz: on/en (kąt, będę). Before k/g: oŋ/eŋ (ręka).",
       "Before s, sz, z, ż, f, w, ch: a real nasal vowel ending in a nasal w (wąs, mięso, gęś).",
-      "At the end of a word: ę ≈ e (idę, proszę), ą = nasal o+w (idą, z mamą).",
+      "At the end of a word: ę is a plain e (idę, proszę, dziękuję — saying a full “ę” there sounds over-careful), but ą stays a nasal o+w (idą, z mamą).",
+      "Before l/ł the nasality disappears: wziął = “wzioł”, wzięła = “wzieła”.",
     ],
     exercises: [
       "Minimal pairs wąs/was, męka/mąka, idą/idę.",
       "Hold your nose: for ą/ę before s/sz you should feel the vibration stop.",
       "Phrase: “Idę z mamą po mąkę i mięso.”",
     ],
-    practiceWords: ["ręka", "mąka", "pięć", "będę", "wąski", "mięso", "gęś", "idą", "proszę", "dziękuję"],
+    practiceWords: ["ręka", "mąka", "pięć", "będę", "wąski", "mięso", "gęś", "idą", "język", "zęby"],
     minimalPairs: [["wąs", "was"], ["kąt", "kat"], ["męka", "mąka"], ["idą", "idę"]],
     twister: "Gęś gęga, a wąż wąsko się wije między gałęziami.",
     detect(toks) {
@@ -407,6 +408,72 @@ export const PATTERNS = [
     },
   },
   {
+    id: "endings",
+    title: "Full word endings",
+    category: "vowels",
+    symbol: "-a",
+    severity: { be: 2, ru: 2 },
+    summary: "Polish says the last vowel fully (robot-a, mam-y, dobr-e) — it is never swallowed into a vague ə.",
+    why: {
+      be: "Unstressed endings in Belarusian are weakened, so Polish endings can come out vague. Polish grammar lives in the endings (kawa / kawę / kawy), so a blurred ending changes the word.",
+      ru: "Russian reduces unstressed endings to [ə] (ма́ма → mamə). In Polish the recogniser then hears another grammatical form: mama → mamę, robota → robotę.",
+    },
+    howTo: [
+      "Say the last vowel with the same quality and length as the others — a clear a, e, y, o, u.",
+      "Do not let the voice drop or fade before the ending; the ending is unstressed but not weaker.",
+      "If the recogniser keeps hearing another ending, it may also just be guessing a more common form — listen (🔊) and compare.",
+    ],
+    exercises: [
+      "Case drill: kawa – kawę – kawy – kawą, each ending crisp and different.",
+      "Whisper the word: a vague ending disappears completely in a whisper, a full one does not.",
+      "Read a sentence and exaggerate every last vowel, then read it normally keeping them clear.",
+    ],
+    practiceWords: ["robota", "mama", "kawa", "szkoła", "dobre", "nowy", "okno", "książka", "rodzina", "lato"],
+    minimalPairs: [["kawa", "kawy"], ["mama", "mamy"], ["dobra", "dobre"], ["lata", "lato"]],
+    twister: "Mama ma kawę, a Ala ma kawę i kawałek ciasta.",
+    detect(toks) {
+      const vowels = toks.filter((t) => t.syl !== null);
+      return vowels.length >= 2 && toks[toks.length - 1].syl !== null && toks[toks.length - 1].p !== "on";
+    },
+  },
+  {
+    id: "even_syllables",
+    title: "Even syllables (no stretching)",
+    category: "prosody",
+    symbol: "≈",
+    severity: { be: 2, ru: 3 },
+    summary: "Polish syllables are roughly the same length. The stressed one is a bit louder, not longer — no “przeciąganie” of vowels.",
+    why: {
+      be: "In Belarusian the stressed vowel is long and the others are short and reduced. Carried into Polish this gives a drawn-out, sing-song rhythm (do-o-brze, pa-mię-ę-tam).",
+      ru: "Russian marks stress mainly by length: the stressed vowel can be twice as long as its neighbours and the rest are squeezed. Polish keeps syllables even, so the long vowel sounds like “przeciąganie” — typical of an Eastern accent.",
+    },
+    howTo: [
+      "Give every syllable about the same time, like beats of a metronome: ta-ta-TA-ta.",
+      "Mark the stressed syllable with a little more energy (or a small pitch step), not by holding the vowel.",
+      "Keep unstressed vowels full: if they get shorter and vaguer, the stressed one automatically feels longer.",
+      "It is fine to slow down at the very end of a sentence — the app does not count that.",
+    ],
+    exercises: [
+      "Rhythm check below: read the sentence and look at the bars — they should be about the same width.",
+      "Read a line tapping one finger per syllable at a steady beat, then speed up while keeping the beat even.",
+      "Say long words in “robot voice” (u-ni-wer-sy-tet), then normally — keep the evenness.",
+      "Shadow a Polish recording (🔊): copy its timing, not only the sounds.",
+    ],
+    practiceWords: ["dobrze", "pamiętam", "samochód", "uniwersytet", "rozumiem", "dziękuję", "przepraszam", "kobieta", "telefon", "człowiek"],
+    minimalPairs: [],
+    rhythmSentences: [
+      "Ala ma kota, a kot ma Alę.",
+      "Dzisiaj rano poszedłem do pracy.",
+      "Przepraszam, gdzie jest przystanek autobusowy?",
+      "Bardzo dziękuję za pomoc, to było bardzo miłe.",
+      "Mieszkam w Warszawie od trzech lat.",
+    ],
+    twister: "Pamiętam, jak po pracy powoli wracaliśmy do domu.",
+    detect() {
+      return false; // measured from the audio of the whole reading, not per word
+    },
+  },
+  {
     id: "stress",
     title: "Penultimate stress",
     category: "prosody",
@@ -493,7 +560,7 @@ export const FLUENCY_TIPS = {
     high: "Your voice often fades at the end of sentences. Keep the volume up to the last syllable — it is what makes you sound confident.",
   },
   rhythm: {
-    title: "Rhythm",
-    low: "Your syllable lengths vary a lot (typical when unstressed vowels get reduced). Read a line to a slow, steady beat — one syllable per beat — then speed up.",
+    title: "Even syllables",
+    low: "Some syllables were drawn out much longer than the rest (“przeciąganie”). Polish marks stress with a little more energy, not length. Read a line to a steady beat — one syllable per beat — then speed up.",
   },
 };

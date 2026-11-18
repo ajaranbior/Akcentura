@@ -17,6 +17,9 @@ A mobile-friendly web app that helps you **sound confident and natural in Polish
 | **Fluency & confidence** | Pace (syllables/s), hesitation pauses, melody range (semitones), voice fading at the end of sentences, rhythm variability. |
 | **Practice** | A ranked list of your focus areas, with explanations for *your* native language, how to make the sound, exercises, practice words, **minimal-pair drills** (e.g. *pora / para*, *czy / ci*, *gol / hol*), tongue twisters and a list of your own problem words. |
 | **Vowel lab** | A live vowel chart (F1/F2 formants) showing where your vowel lands compared with Polish *i y e a o u*. Calibrate with *i, a, u* and the targets are mapped onto your voice — useful for the narrow Belarusian/Russian *o* vs the open Polish *o*. |
+| **IPA sound map** | After each reading, every Polish phoneme in IPA (ɔ, ɨ, ʂ, ɕ, t͡ʂ, w …) with how often it came out as another sound and what it was heard as instead. Aggregated over recent readings in Practice. |
+| **Even syllables** | Measures syllable lengths from the audio and highlights drawn-out syllables (“przeciąganie”) — Polish syllables are roughly even, stress is a bit louder, not longer. A *Rhythm check* lets you record single sentences. |
+| **Word check (IPA)** | In the Vowel lab: say a word and get the vowel of every syllable in IPA next to the Polish target (e.g. *pogoda* → [ɔ ɐ a] vs /ɔ ɔ a/). The chart also shows the narrow Russian/Belarusian [o] and the reduced [ɐ] next to Polish [ɔ], and flags a u-glide ([ᵘɔ]). |
 | **Progress** | Score trend, struggle areas with “last 5 readings vs earlier” trend arrows, pace over time, hardest words (mastered after 3 clear tries in a row), session history. |
 
 ### Accent patterns tracked
@@ -32,7 +35,9 @@ A mobile-friendly web app that helps you **sound confident and natural in Polish
 | **ł** = w and light **l** | RU, BE | *łata / lata*, dark л in *lato* |
 | Hard **cz, sz, ż, szcz** (not soft ч / щ) | RU | *czy* → “ci”, *szczęście* → “щęście” |
 | Soft **ś ć ź dź ń** (not сь ть дь) | RU, BE | *ciocia* → “t'ot'a” |
-| Nasal **ą ę** | BE, RU | *wąs / was*, *idą / idę* |
+| Nasal **ą ę** (final ę = e, so *dziękuje / dziękuję* are not flagged) | BE, RU | *wąs / was*, *idą / idę* |
+| Full word endings (no reduced ə) | BE, RU | *sasza* heard as “saszę” |
+| Even syllables (no stretching) | RU, BE | *pa-mię-tam*, not *pa-mię-ę-tam* |
 | Plosive **g** (not fricative г) | BE | *gol* → “hol” |
 | Voiceless **h** | BE | *herbata* with a voiced h |
 | **w** → f at syllable end (not ў) | BE | *krew* = “kref” |
@@ -43,6 +48,7 @@ A mobile-friendly web app that helps you **sound confident and natural in Polish
 
 * **Speech recognition** uses the browser’s built-in Web Speech API (`pl-PL`). Works in **Chrome, Edge (desktop & Android)** and **Safari (macOS & iOS)**. Firefox has no speech recognition — there you only get the voice analysis and the Vowel lab. In Chrome/Edge the audio is processed by the browser vendor’s speech service, so an internet connection is needed.
 * A recogniser is built to *understand* speech, so it forgives a lot. A word it mishears is therefore a strong sign of a real problem, but a word it understood can still have an accent. The **minimal-pair drills** and the **Vowel lab** test single sounds more strictly.
+* **Results are split**: “Found in this reading” only lists what your own recording showed; patterns that are merely common for Belarusian/Russian speakers are collapsed under “General tips”.
 * **Stress and rhythm** can’t be read from the recognised text. The app explains them, flags stress-trap words (Russian/Belarusian cognates) and words you repeat, and measures rhythm from the audio.
 * **Voice analysis** (loudness, pitch with the McLeod method, formants with LPC) runs locally in your browser. Some Android phones can’t give the microphone to speech recognition and analysis at the same time; the app notices and switches the analysis off (also available in Settings).
 * **Privacy:** there is no server. Readings and progress are stored in your browser’s `localStorage`. Use *Settings → Export backup* to move them to another device.

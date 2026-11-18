@@ -5,7 +5,7 @@
 //    self-corrections and recogniser confidence.
 // Both produce the same report shape.
 
-import { tokenize, tokenizeWithSpans, wordSimilarity, g2p, stressIndex, normalizeWord, syllableCount } from "./polish.js";
+import { tokenize, tokenizeWithSpans, wordSimilarity, g2p, stressIndex, normalizeWord, syllableCount, VOWEL_PHONES } from "./polish.js";
 import { patternsInWord, PATTERN_BY_ID, severityFor, relevantPatterns } from "./profiles.js";
 
 const GOOD = 0.97;
@@ -43,6 +43,34 @@ function alignPhones(E, H) {
   return ops.reverse();
 }
 
+// Internal phone symbols → IPA (Polish standard pronunciation).
+export const IPA = {
+  a: "a", e: "ɛ", i: "i", o: "ɔ", u: "u", y: "ɨ", on: "ɔ̃", en: "ɛ̃",
+  p: "p", b: "b", t: "t", d: "d", k: "k", g: "ɡ", f: "f", v: "v", s: "s", z: "z", x: "x",
+  m: "m", n: "n", l: "l", w: "w", j: "j", r: "r", ts: "t͡s", dz: "d͡z",
+  cz: "t͡ʂ", dzh: "d͡ʐ", sz: "ʂ", zh: "ʐ", si: "ɕ", zi: "ʑ", ci: "t͡ɕ", dzi: "d͡ʑ", ni: "ɲ",
+};
+// spelling of each phone, for the learner
+export const PHONE_SPELLING = {
+  a: "a", e: "e", i: "i", o: "o", u: "u, ó", y: "y", on: "ą", en: "ę",
+  p: "p", b: "b", t: "t", d: "d", k: "k", g: "g", f: "f", v: "w", s: "s", z: "z", x: "h, ch",
+  m: "m", n: "n", l: "l", w: "ł", j: "j, i", r: "r", ts: "c", dz: "dz",
+  cz: "cz", dzh: "dż", sz: "sz", zh: "ż, rz", si: "ś, si", zi: "ź, zi", ci: "ć, ci", dzi: "dź, dzi", ni: "ń, ni",
+};
+export const ipaOf = (p) => (p ? IPA[p] || p : "∅");
+
+/** Phones of `expected` that came out differently in `heard`: [{p, as}] (as = "" when dropped). */
+export function phoneErrors(expected, heard) {
+  const E = g2p(expected), H = g2p(heard);
+  if (!E.length || !H.length) return [];
+  const out = [];
+  for (const op of alignPhones(E, H)) {
+    if (op.type === "sub") out.push({ p: E[op.e].p, as: H[op.h].p });
+    else if (op.type === "del") out.push({ p: E[op.e].p, as: "" });
+  }
+  return out;
+}
+
 const SOFTENED = { t: "ci", d: "dzi", s: "si", z: "zi", n: "ni", ts: "ci", dz: "dzi" };
 const HARD_SIB = new Set(["cz", "sz", "zh", "dzh"]);
 const SOFT_SIB = new Set(["si", "ci", "zi", "dzi", "ni"]);
@@ -58,8 +86,10 @@ export function diagnose(expected, heard) {
   if (!exp || !hrd || exp === hrd) return [];
   const E = g2p(exp), H = g2p(hrd);
   if (!E.length || !H.length) return [];
-  const stress = stressIndex(exp);
   const ops = alignPhones(E, H);
+  // index of the ending vowel (words of 2+ syllables whose last vowel is at most one sound from the end)
+  let lastVowel = E.reduce((k, t, i) => (t.syl !== null ? i : k), -1);
+  if (E[lastVowel]?.syl < 1 || lastVowel < E.length - 2) lastVowel = -1;
   const found = [];
   const add = (id, from, to) => found.push({ id, from, to });
   // Too different: it is a different word, not an accent detail.
@@ -71,7 +101,12 @@ export function diagnose(expected, heard) {
     if (op.type === "sub") {
       const ep = e.p, hp = h.p;
       const next = E[op.e + 1];
-      if (ep === "o" && hp === "a") add("akanie", "o", "a");
+      // Only the ending vowel differs (sasza → saszę, robota → robotę): either the ending
+      // was reduced to a vague ə, or the recogniser picked another grammatical form.
+      // Either way it is not about nasal vowels. A final ą that loses its nasality is.
+      if (op.e === lastVowel && VOWEL_PHONES.has(hp) && ep !== "on" && !(ep === "o" && hp === "a")
+        && !(ep === "y" && hp === "i") && !(ep === "i" && hp === "y")) add("endings", ep, hp);
+      else if (ep === "o" && hp === "a") add("akanie", "o", "a");
       else if (ep === "o" && hp === "u") add("open_o", "o", "u");
       else if (ep === "e" && (hp === "a" || hp === "i" || hp === "y")) {
         add("yakanie", "e", hp);
@@ -345,12 +380,30 @@ export function buildReport(items, nativeLangs, extra = {}) {
   const patternStats = {};
   const stat = (id) => (patternStats[id] ||= { opp: 0, err: 0, sus: 0, examples: [] });
   const struggle = [];
+  const phonemeStats = {};
   let syllables = 0;
 
   for (const it of items) {
     syllables += syllableCount(it.word) * Math.max(1, it.attempts.length);
     for (const id of it.patterns) stat(id).opp += 1;
     if (it.missed) continue;
+    // IPA sound map: every phone of the word is one chance; a phone that came out
+    // differently in any attempt (that was still recognisably this word) is a miss.
+    const phoneMiss = new Map();
+    for (const a of it.attempts) {
+      if (a.sim >= GOOD || a.sim < 0.45 || !a.heard) continue;
+      for (const e of phoneErrors(it.word, a.heard)) if (!phoneMiss.has(e.p)) phoneMiss.set(e.p, e.as);
+    }
+    for (const t of g2p(it.word)) {
+      const ps = (phonemeStats[t.p] ||= { opp: 0, err: 0, as: {} });
+      ps.opp += 1;
+    }
+    for (const [p, as] of phoneMiss) {
+      const ps = phonemeStats[p];
+      if (!ps) continue;
+      ps.err += 1;
+      ps.as[as] = (ps.as[as] || 0) + 1;
+    }
     const wrong = new Map(); // patternId -> example
     if (it.prothesis) wrong.set("prothesis", { word: it.word, heard: "w " + it.word, from: "", to: "w" });
     const target = it.word;
@@ -413,12 +466,11 @@ export function buildReport(items, nativeLangs, extra = {}) {
     clarity: extra.clarity ?? null,
     fluency: extra.fluency || null,
     patternStats,
+    phonemeStats,
     struggleWords: struggle.slice(0, 40),
     words: mode === "guided" ? items.map((it) => ({ w: it.surface, s: it.missed ? "missed" : statusOf(it) })) : undefined,
   };
-  report.overall = overallScore(report);
-  report.recommendations = recommend(patternStats, nativeLangs);
-  return report;
+  return applyFluency(report, extra.fluency);
 }
 
 function statusOf(it) {
@@ -445,7 +497,13 @@ export function overallScore(r) {
  * Ranks accent patterns to work on. Observed errors dominate; with little data
  * the native-language prior fills in (Bayesian smoothing).
  */
-export function recommend(patternStats, nativeLangs, limit = 4) {
+/**
+ * Rows are split into `found` (something in the learner's own speech pointed at the
+ * pattern) and general tips (only the native-language prior). All found rows are
+ * returned first, followed by up to `limit` general tips.
+ * `scope` words the reason: "reading" (one session) or "recent" (aggregated).
+ */
+export function recommend(patternStats, nativeLangs, limit = 4, scope = "reading") {
   const K = 6;
   const rows = [];
   for (const p of relevantPatterns(nativeLangs)) {
@@ -453,23 +511,53 @@ export function recommend(patternStats, nativeLangs, limit = 4) {
     const prior = 0.06 * severityFor(p, nativeLangs);
     const observed = s.err + 0.5 * s.sus;
     const rate = (observed + prior * K) / (s.opp + K);
-    rows.push({ id: p.id, rate, opp: s.opp, err: s.err, sus: s.sus, examples: s.examples, measured: s.opp >= 3 || s.err > 0 });
+    rows.push({ id: p.id, rate, opp: s.opp, err: s.err, sus: s.sus, examples: s.examples || [], stretched: s.stretched,
+      measured: s.opp >= 3 || s.err > 0, found: s.err > 0 || s.sus >= 0.5 });
   }
   rows.sort((a, b) => b.rate - a.rate);
-  return rows.slice(0, limit).map((r) => ({ ...r, reason: reasonText(r, nativeLangs) }));
+  const found = rows.filter((r) => r.found);
+  const general = rows.filter((r) => !r.found).slice(0, limit);
+  return [...found, ...general].map((r) => ({ ...r, reason: reasonText(r, nativeLangs, scope) }));
 }
 
-function reasonText(r, nativeLangs) {
+function reasonText(r, nativeLangs, scope) {
   const p = PATTERN_BY_ID[r.id];
   const langs = nativeLangs.filter((l) => (p.severity[l] ?? 0) >= 2).map((l) => (l === "be" ? "Belarusian" : "Russian"));
+  const where = scope === "recent" ? "In your recent readings" : "In this reading";
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  if (r.id === "even_syllables" && r.err > 0) {
+    return `${where}: ${plural(r.stretched ?? Math.round(r.err), "syllable")} of ${r.opp} were drawn out — much longer than your usual syllable.`;
+  }
   if (r.err > 0) {
     const ex = r.examples[0];
-    const exText = ex ? ` (e.g. “${ex.word}” was heard as “${ex.heard}”)` : "";
-    return `${Math.round(r.err)} of ${r.opp} word${r.opp === 1 ? "" : "s"} with this sound ${r.err === 1 ? "was" : "were"} misheard${exText}.`;
+    const exText = ex ? ` — e.g. you read “${ex.word}”, it was heard as “${ex.heard}”` : "";
+    return `${where}: ${Math.round(r.err)} of ${plural(r.opp, "word")} with this sound ${r.err === 1 ? "was" : "were"} misheard${exText}.`;
   }
-  if (r.sus >= 0.5) return `Words with this sound often needed a second try while reading.`;
-  if (langs.length) return `Typical for ${langs.join(" and ")} speakers${r.opp ? ` — no problems detected in ${r.opp} word${r.opp === 1 ? "" : "s"} yet` : ""}.`;
-  return `Worth checking.`;
+  if (r.sus >= 0.5) return `${where}: words with this sound often needed a second try.`;
+  const checked = r.opp ? (r.id === "even_syllables" ? `${plural(r.opp, "syllable")} checked` : `${plural(r.opp, "word")} with this sound checked`) : "";
+  const typical = langs.length ? `A common habit of ${langs.join(" and ")} speakers` : "Worth checking";
+  return `Not found in your speech${checked ? ` (${checked})` : " — not enough data yet"}. ${typical}; general tip only.`;
+}
+
+/**
+ * Adds the audio-based syllable-evenness result (see audio.js analyzeRhythm) to the
+ * report's pattern stats, so stretched syllables show up like any other finding.
+ */
+export function applyFluency(report, fluency) {
+  report.fluency = fluency || null;
+  const rh = fluency && fluency.rhythm;
+  if (rh && rh.intervals >= 12) {
+    report.patternStats.even_syllables = {
+      opp: rh.intervals,
+      err: rh.excess,
+      sus: 0,
+      stretched: rh.stretched,
+      examples: [],
+    };
+  }
+  report.recommendations = recommend(report.patternStats, report.nativeLangs);
+  report.overall = overallScore(report);
+  return report;
 }
 
 export { GOOD, CLOSE };

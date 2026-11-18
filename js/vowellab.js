@@ -3,8 +3,9 @@
 // so the o target is where a Polish o would be for your voice — not where
 // your habitual (narrower) Russian/Belarusian o lands.
 
-import { AudioAnalyzer } from "./audio.js";
+import { AudioAnalyzer, syllablePeaks } from "./audio.js";
 import { getState, setVowelCalibration } from "./storage.js";
+import { g2p, normalizeWord } from "./polish.js";
 
 // Approximate Polish vowel formants (Hz), after Jassem's measurements.
 export const POLISH_VOWELS = {
@@ -28,6 +29,42 @@ export function personalTargets(voiceType, cal) {
   }
   return out;
 }
+
+// IPA of the Polish vowels
+export const VOWEL_IPA = { i: "i", y: "ɨ", e: "ɛ", a: "a", o: "ɔ", u: "u" };
+
+/**
+ * Polish targets plus the non-Polish vowels a Belarusian/Russian accent tends to use,
+ * placed relative to the speaker's own Polish targets:
+ *  o  close-mid [o] (stressed Russian/Belarusian о — narrower than Polish ɔ)
+ *  ɐ  reduced unstressed о/а (akanie: молоко, вада)
+ *  ə  vague reduced vowel (unstressed endings)
+ *  e  close-mid [e] (Russian stressed е — narrower than Polish ɛ)
+ */
+export function ipaTargets(targets) {
+  const t = targets;
+  const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+  return [
+    ...ORDER.map((v) => ({ ipa: VOWEL_IPA[v], polish: true, v, f: t[v] })),
+    { ipa: "o", polish: false, f: mix(t.o, t.u, 0.45), note: "narrow Russian/Belarusian о" },
+    { ipa: "ɐ", polish: false, f: [(t.o[0] + t.a[0]) / 2 * 1.02, (t.a[1] + t.o[1]) / 2 * 1.08], note: "reduced о/а (akanie)" },
+    { ipa: "ə", polish: false, f: [(t.e[0] + t.o[0]) / 2 * 0.95, (t.e[1] + t.o[1]) / 2], note: "vague reduced vowel" },
+    { ipa: "e", polish: false, f: mix(t.e, t.i, 0.4), note: "narrow Russian е" },
+  ];
+}
+
+export function classifyIpa(f1, f2, targets) {
+  let best = null, bd = Infinity;
+  for (const c of ipaTargets(targets)) {
+    const d = Math.hypot(Math.log(f1 / c.f[0]) * 1.2, Math.log(f2 / c.f[1]));
+    if (d < bd) { bd = d; best = c; }
+  }
+  return { ...best, distance: bd };
+}
+
+const WORD_SETS = {
+  o: ["woda", "pogoda", "dobrota", "kolor", "robota", "samochód", "ogród", "potem", "pomoc", "obok"],
+};
 
 export function classifyVowel(f1, f2, targets) {
   let best = null, bd = Infinity;
@@ -58,6 +95,14 @@ export function mountVowelLab(root, { toast }) {
     <div class="row" style="margin-top:10px">
       <button class="btn primary" id="vlStart" type="button">Start listening</button>
       <button class="btn" id="vlCalibrate" type="button">Calibrate (i · a · u)</button>
+    </div>
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <h3 style="margin:0 0 4px">Word check (IPA per syllable)</h3>
+      <p class="small muted">Say one word; every syllable’s vowel is measured and written in IPA next to the Polish target — e.g. whether the o after the first syllable stays a full [ɔ] or turns into [ɐ]/[o]. Calibrate first for best results.</p>
+      <div class="row" style="align-items:center"><select id="vlWord" style="width:auto">${WORD_SETS.o.map((w) => `<option>${w}</option>`).join("")}</select>
+        <input id="vlWordCustom" placeholder="or type a word" style="flex:1;min-width:120px">
+        <button class="btn small primary" id="vlWordRec" type="button">Record word</button></div>
+      <div id="vlWordOut" style="margin-top:10px"></div>
     </div>`;
 
   const canvas = root.querySelector("#vlCanvas");
@@ -123,7 +168,21 @@ export function mountVowelLab(root, { toast }) {
       ctx.fillStyle = on ? css("--accent") : css("--text-2");
       ctx.font = "bold 18px Georgia, serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(v, X(f2), Y(f1));
+      ctx.fillText(VOWEL_IPA[v], X(f2), Y(f1));
+    }
+    // non-Polish reference vowels (dashed): where an Eastern Slavic accent lands
+    for (const c of ipaTargets(t).filter((x) => !x.polish && (target === "o" ? ["o", "ɐ"].includes(x.ipa) : target === "e" ? ["e", "ə"].includes(x.ipa) : false))) {
+      ctx.beginPath();
+      ctx.setLineDash([3, 3]);
+      ctx.arc(X(c.f[1]), Y(c.f[0]), 16, 0, Math.PI * 2);
+      ctx.strokeStyle = css("--bad");
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = css("--bad");
+      ctx.font = "15px Georgia, serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(c.ipa, X(c.f[1]), Y(c.f[0]));
     }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     trail.forEach((p, i) => {
@@ -140,7 +199,9 @@ export function mountVowelLab(root, { toast }) {
 
   function median(a) { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; }
 
+  let wordRec = null;
   function onFrame(fr) {
+    if (wordRec) wordRec.push({ t: fr.t, db: fr.db, speech: fr.speech, fm: fr.formants });
     if (fr.formants) {
       seg.push([fr.formants.f1, fr.formants.f2]);
       silent = 0;
@@ -159,6 +220,11 @@ export function mountVowelLab(root, { toast }) {
       const mid = seg.slice(Math.floor(seg.length * 0.25), Math.ceil(seg.length * 0.75));
       const f1 = median(mid.map((p) => p[0])), f2 = median(mid.map((p) => p[1]));
       const { vowel } = classifyVowel(f1, f2, targets());
+      const ipa = classifyIpa(f1, f2, targets());
+      // onset glide: the first part of the vowel much closer/rounder than its middle ([ᵘɔ])
+      const head = seg.slice(0, Math.max(2, Math.floor(seg.length * 0.2)));
+      const h1 = median(head.map((p) => p[0])), h2 = median(head.map((p) => p[1]));
+      const glide = target === "o" && seg.length >= 8 && h1 < f1 * 0.85 && h2 <= f2 * 1.05;
       tally.push(vowel === target);
       if (tally.length > 10) tally.shift();
       const hits = tally.filter(Boolean).length;
@@ -170,7 +236,9 @@ export function mountVowelLab(root, { toast }) {
         if (f2 < t[1] * 0.88) hint += hint ? ", tongue more forward" : " — tongue more forward";
         else if (f2 > t[1] * 1.12) hint += hint ? ", tongue further back / round lips" : " — tongue further back / round the lips";
       }
-      resultEl.innerHTML = `Last vowel sounded like <b>${vowel}</b> ${vowel === target ? "✓" : `(target ${target})${hint}`}. On target: <b>${hits}/${tally.length}</b>`;
+      const tf1 = targets()[target][0];
+      const open = target === "o" ? ` Openness: F1 ${Math.round(f1)} Hz vs Polish [ɔ] ${Math.round(tf1)} Hz${f1 < tf1 * 0.92 ? " — too narrow, drop the jaw" : f1 > tf1 * 1.15 ? " — too open (towards a)" : " ✓"}.` : "";
+      resultEl.innerHTML = `Last vowel ≈ <b>[${ipa.ipa}]</b>${ipa.polish ? "" : ` <span class="badge bad">not Polish: ${ipa.note}</span>`} ${vowel === target ? "✓" : `(target [${VOWEL_IPA[target]}])${hint}`}.${open}${glide ? ` <b>Starts with a u-glide [ᵘɔ]</b> — begin the o already open.` : ""} On target: <b>${hits}/${tally.length}</b>`;
     }
     seg = [];
     silent = 0;
@@ -235,9 +303,82 @@ export function mountVowelLab(root, { toast }) {
     draw();
   });
 
+  const wordBtn = root.querySelector("#vlWordRec");
+  const wordOut = root.querySelector("#vlWordOut");
+  wordBtn.addEventListener("click", async () => {
+    if (wordRec) { finishWord(); return; }
+    if (!analyzer && !(await start())) return;
+    wordRec = [];
+    wordBtn.textContent = "Stop";
+    wordOut.innerHTML = `<p class="small muted">Say “${currentWord()}” clearly, then tap Stop.</p>`;
+  });
+  const currentWord = () => normalizeWord(root.querySelector("#vlWordCustom").value.trim().split(/\s+/)[0] || "") || root.querySelector("#vlWord").value;
+
+  function finishWord() {
+    const frames = wordRec;
+    wordRec = null;
+    wordBtn.textContent = "Record word";
+    const word = currentWord();
+    const res = measureWord(frames, word, targets());
+    if (!res) { wordOut.innerHTML = `<div class="result-banner meh">Couldn’t measure the vowels — say the word a bit louder and slower.</div>`; return; }
+    wordOut.innerHTML = renderWordResult(word, res);
+  }
+
   const ro = new ResizeObserver(() => draw());
   ro.observe(canvas);
   draw();
 
-  return { stop, setTarget: (v) => targetsEl.querySelector(`[data-v="${v}"]`)?.click() };
+  return { stop: () => { wordRec = null; stop(); }, setTarget: (v) => targetsEl.querySelector(`[data-v="${v}"]`)?.click() };
+}
+
+/** Expected vowel per syllable of a word (Polish phone ids, nasals by their oral base). */
+export function expectedVowels(word) {
+  return g2p(word).filter((t) => t.syl !== null).map((t) => ({ v: t.p === "on" ? "o" : t.p === "en" ? "e" : t.p, letters: t.letters }));
+}
+
+/**
+ * Measures the vowel at each syllable peak of a recorded word.
+ * frames: [{t, db, speech, fm:{f1,f2}|null}]. Returns [{expected, ipa, ok}] or null.
+ */
+export function measureWord(frames, word, targets) {
+  if (!frames || frames.length < 10) return null;
+  const exp = expectedVowels(word);
+  if (!exp.length) return null;
+  const peaks = syllablePeaks(frames);
+  const nuclei = [];
+  for (const i of peaks) {
+    const fm = frames.slice(Math.max(0, i - 3), i + 4).map((f) => f.fm).filter(Boolean);
+    if (fm.length < 2) continue;
+    const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+    nuclei.push({ f1: med(fm.map((f) => f.f1)), f2: med(fm.map((f) => f.f2)), db: frames[i].db });
+  }
+  if (!nuclei.length) return null;
+  // keep the loudest nuclei if more were found than syllables, in time order
+  let use = nuclei;
+  if (use.length > exp.length) {
+    const keep = new Set([...use].sort((a, b) => b.db - a.db).slice(0, exp.length));
+    use = use.filter((n) => keep.has(n));
+  }
+  return {
+    countMismatch: use.length !== exp.length,
+    syllables: exp.map((e, k) => {
+      const n = use[k];
+      if (!n) return { expected: e, ipa: null, ok: null };
+      const c = classifyIpa(n.f1, n.f2, targets);
+      return { expected: e, ipa: c.ipa, polish: c.polish, note: c.note, ok: c.polish && c.v === e.v, f1: Math.round(n.f1), f2: Math.round(n.f2) };
+    }),
+  };
+}
+
+function renderWordResult(word, res) {
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const target = res.syllables.map((s) => VOWEL_IPA[s.expected.v] || s.expected.v);
+  const cells = res.syllables.map((s) => `<span class="ipa-chip ${s.ok ? "good" : s.ok === false ? "bad" : ""}" style="display:inline-flex;min-width:56px;margin:0 4px 4px 0">
+      <span class="sp">${esc(s.expected.letters)}</span><span class="ipa">[${esc(s.ipa ?? "?")}]</span><span class="pc">target [${esc(VOWEL_IPA[s.expected.v] || s.expected.v)}]</span></span>`).join("");
+  const wrong = res.syllables.filter((s) => s.ok === false);
+  const notes = wrong.map((s) => `<li>“${esc(s.expected.letters)}” came out as [${esc(s.ipa)}]${s.polish ? "" : ` (${esc(s.note)})`}, Polish wants [${esc(VOWEL_IPA[s.expected.v] || s.expected.v)}].</li>`).join("");
+  return `<div class="small"><b>${esc(word)}</b> · target /${target.join(" · ")}/</div>
+    <div style="margin-top:6px">${cells}</div>
+    ${wrong.length ? `<ul class="tips small">${notes}</ul>` : `<div class="result-banner ok">All vowels on target ✓</div>`}
+    ${res.countMismatch ? `<p class="small muted">I found a different number of syllables than the word has — say it a little slower, with a short gap before and after.</p>` : ""}`;
 }

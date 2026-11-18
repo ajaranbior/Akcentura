@@ -1,5 +1,5 @@
-import { GuidedSession, analyzeFree, recommend, diagnose, overallScore } from "./analyzer.js";
-import { AudioAnalyzer } from "./audio.js";
+import { GuidedSession, analyzeFree, recommend, diagnose, overallScore, applyFluency, ipaOf, PHONE_SPELLING } from "./analyzer.js";
+import { AudioAnalyzer, analyzeRhythm } from "./audio.js";
 import { ContinuousRecognizer, recognizeOnce, speechRecognitionSupported, speak, ttsSupported, hasPolishVoice } from "./recognizer.js";
 import { PATTERN_BY_ID, NATIVE_LANGUAGES, TARGET_LANGUAGES, CATEGORY_LABELS, FLUENCY_TIPS, relevantPatterns, whyFor, severityFor } from "./profiles.js";
 import { SAMPLE_TEXTS } from "./texts.js";
@@ -413,11 +413,11 @@ async function stopSession() {
   const base = { title: s.mode === "text" ? s.text.title : "Book reading", durationSec, date: new Date(s.start).toISOString() };
   let report = s.mode === "text" ? s.guided.report(base) : analyzeFree(s.phrases, langs(), base);
   if (s.analyzer) {
-    report.fluency = s.analyzer.summary(speechRecognitionSupported ? report.syllables : 0);
-    if (report.fluency && report.fluency.score == null) report.fluency = null;
+    let fl = s.analyzer.summary(speechRecognitionSupported ? report.syllables : 0);
+    if (fl && fl.score == null) fl = null;
     s.analyzer.stop();
+    applyFluency(report, fl);
   }
-  report.overall = overallScore(report);
   report.phrases = s.phrases.map((p) => ({ text: p.text, confidence: p.confidence }));
   report.textId = s.text ? s.text.id : null;
   if (report.wordsRead >= 3 || report.fluency) store.addSession(report);
@@ -441,7 +441,7 @@ function fluencyCard(f) {
   if (f.hesitationRate > 14) notes.push(["pauses", FLUENCY_TIPS.pauses.high]);
   if (f.pitchStd != null && f.pitchStd < 1.6) notes.push(["pitch", FLUENCY_TIPS.pitch.low]);
   if (f.trailing != null && f.trailing > 0.35) notes.push(["trailing", FLUENCY_TIPS.trailing.high]);
-  if (f.npvi != null && f.npvi > 62) notes.push(["rhythm", FLUENCY_TIPS.rhythm.low]);
+  if (f.rhythm ? f.rhythm.excess > 0 : f.npvi != null && f.npvi > 62) notes.push(["rhythm", FLUENCY_TIPS.rhythm.low]);
   return `<div class="card">
     <div class="row between"><h3 style="margin:0">Fluency & confidence</h3><span class="badge ${f.score >= 75 ? "good" : f.score >= 55 ? "warn" : "bad"}">${f.score}/100</span></div>
     <div class="grid2" style="margin-top:12px">
@@ -451,24 +451,84 @@ function fluencyCard(f) {
       ${statBox("Fading endings", f.trailing != null ? Math.round(f.trailing * 100) : null, "%")}
     </div>
     <p class="small muted" style="margin-top:10px">Natural Polish reading: ~4.5–6 syllables/s, few pauses inside sentences, a lively melody (≥2 semitones) and full volume to the end of the sentence.${f.npvi != null ? ` Rhythm variability (nPVI): ${f.npvi}.` : ""}</p>
-    ${notes.length ? `<ul class="tips">${notes.map(([k, t]) => `<li><b>${FLUENCY_TIPS[k].title}:</b> ${esc(t)}</li>`).join("")}</ul>` : `<p class="small"><b>Nice:</b> pace, pauses and melody sound confident.</p>`}
+    ${notes.length ? `<ul class="tips">${notes.map(([k, t]) => `<li><b>${FLUENCY_TIPS[k].title}:</b> ${esc(t)}</li>`).join("")}</ul>` : `<p class="small"><b>Nice:</b> pace, pauses, melody and rhythm sound confident.</p>`}
+    ${rhythmBlock(f.rhythm)}
   </div>`;
 }
 
-function focusCards(recs) {
-  return recs.slice(0, 3).map((r) => {
-    const p = PATTERN_BY_ID[r.id];
-    return `<div class="card focus-card tight">
+function focusCard(r) {
+  const p = PATTERN_BY_ID[r.id];
+  return `<div class="card focus-card tight">
       <div class="row" style="flex-wrap:nowrap;align-items:flex-start">
         <span class="symbol">${esc(p.symbol)}</span>
-        <div style="flex:1;min-width:0"><b>${esc(p.title)}</b> ${r.err > 0 ? `<span class="badge bad">detected</span>` : r.sus >= 0.5 ? `<span class="badge warn">suspected</span>` : `<span class="badge">typical</span>`}
+        <div style="flex:1;min-width:0"><b>${esc(p.title)}</b> ${r.err > 0 ? `<span class="badge bad">found</span>` : `<span class="badge warn">suspected</span>`}
           <div class="small">${esc(r.reason)}</div>
           <div class="small muted">${esc(p.summary)}</div></div>
       </div>
       <div class="row" style="margin-top:8px"><button class="btn small" type="button" data-action="pattern" data-id="${p.id}">How to fix</button>
       ${p.minimalPairs.length && speechRecognitionSupported ? `<button class="btn small" type="button" data-action="pair-drill" data-id="${p.id}">Minimal-pair drill</button>` : ""}</div>
     </div>`;
-  }).join("");
+}
+
+/** Findings from the learner's own speech first; native-language tips kept apart and collapsed. */
+function focusSection(recs, scope = "reading") {
+  const found = recs.filter((r) => r.found);
+  const general = recs.filter((r) => !r.found);
+  const who = langs().map((l) => NATIVE_LANGUAGES[l].name).join(" + ");
+  const head = scope === "reading" ? "Found in this reading" : "Found in your recent readings";
+  const none = scope === "reading"
+    ? "No accent pattern stood out in this reading — the recogniser understood the sounds it checks."
+    : "Nothing stands out yet. Read a few texts and your own patterns will appear here.";
+  return `<h3 style="margin:18px 2px 4px">${head}</h3>
+    <p class="small muted" style="margin:0 2px 10px">Based on what the recogniser heard${scope === "reading" ? " and your audio" : ""} — these are about <i>your</i> pronunciation.</p>
+    ${found.length ? found.slice(0, 5).map(focusCard).join("") : `<div class="card tight small">${none}</div>`}
+    ${general.length ? `<details class="card tight"><summary>General tips for ${esc(who)} speakers <span class="small muted">(not found in your speech)</span></summary>
+      <p class="small muted" style="margin-top:8px">Common habits of ${esc(who)} speakers. Nothing in your recording pointed at them — read them as background, not as feedback.</p>
+      <ul class="word-list">${general.map((r) => { const p = PATTERN_BY_ID[r.id]; return `<li data-action="pattern" data-id="${p.id}" style="cursor:pointer"><span class="symbol">${esc(p.symbol)}</span><div class="wl-main"><div class="wl-word" style="font-size:1rem">${esc(p.title)}</div><div class="wl-sub">${esc(r.reason)}</div></div><span class="muted">›</span></li>`; }).join("")}</ul></details>` : ""}`;
+}
+
+const IPA_GROUPS = [
+  ["Vowels", ["i", "y", "e", "a", "o", "u", "on", "en"]],
+  ["Hard sibilants", ["sz", "zh", "cz", "dzh"]],
+  ["Soft sibilants", ["si", "zi", "ci", "dzi", "ni"]],
+  ["Other consonants", ["s", "z", "ts", "dz", "w", "l", "r", "v", "f", "x", "g", "k", "j", "t", "d", "p", "b", "m", "n"]],
+];
+
+/** IPA sound map: how often each Polish phoneme came through as intended. */
+function ipaCard(stats, scope = "reading") {
+  if (!stats) return "";
+  const rows = Object.entries(stats).filter(([, s]) => s.opp > 0);
+  const opp = rows.reduce((a, [, s]) => a + s.opp, 0);
+  if (opp < 30) return "";
+  const err = rows.reduce((a, [, s]) => a + s.err, 0);
+  const match = Math.round(100 * (1 - err / opp));
+  const chip = (p) => {
+    const s = stats[p];
+    if (!s || !s.opp) return "";
+    const pct = Math.round(100 * (1 - s.err / s.opp));
+    const cls = s.opp < 3 ? "" : s.err === 0 ? "good" : pct >= 90 ? "warn" : "bad";
+    const as = Object.entries(s.as || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k]) => `[${ipaOf(k)}]`).join(" ");
+    return `<div class="ipa-chip ${cls}" title="${esc(PHONE_SPELLING[p] || p)}"><span class="ipa">${esc(ipaOf(p))}</span><span class="sp">${esc(PHONE_SPELLING[p] || p)}</span>
+      <span class="pc">${s.err ? `${s.err}/${s.opp} off${as ? ` → ${esc(as)}` : ""}` : `${s.opp}×`}</span></div>`;
+  };
+  return `<div class="card"><div class="row between"><h3 style="margin:0">Polish sounds (IPA)</h3><span class="badge ${match >= 97 ? "good" : match >= 92 ? "warn" : "bad"}">${match}% match</span></div>
+    <p class="small muted">Each Polish phoneme in the words you ${scope === "reading" ? "read" : "read recently"}, and how often it came out as a different sound (what the recogniser heard instead, in IPA). Green = always as intended. The recogniser is forgiving, so treat this as the clear-cut cases — the Vowel lab measures vowel quality more strictly.</p>
+    ${IPA_GROUPS.map(([title, ps]) => { const c = ps.map(chip).join(""); return c ? `<div class="small muted" style="font-weight:700;margin:10px 0 6px">${title}</div><div class="ipa-grid">${c}</div>` : ""; }).join("")}
+  </div>`;
+}
+
+/** Bars per phrase: width = syllable length; stretched syllables highlighted. */
+function rhythmStrip(rh) {
+  if (!rh || !rh.phrases || !rh.phrases.length) return "";
+  return `<div class="rhythm-strip">${rh.phrases.map((ph) => `<div class="rh-row">${ph.map((r) => `<span class="rh-syl ${r >= rh.stretchRatio ? "long" : ""}" style="flex:${Math.min(4, r).toFixed(2)}"></span>`).join("")}</div>`).join("")}</div>`;
+}
+
+function rhythmBlock(rh) {
+  if (!rh) return "";
+  return `<div style="margin-top:14px"><div class="row between"><b>Even syllables</b><span class="badge ${rh.evenness >= 75 ? "good" : rh.evenness >= 55 ? "warn" : "bad"}">${rh.evenness}/100</span></div>
+    <p class="small muted" style="margin:4px 0 8px">Each bar is one syllable, each row a phrase (the last syllable before a pause is left out — slowing down there is natural). <span class="rh-key long"></span> = drawn out (≥${rh.stretchRatio}× your typical ${rh.median} ms).</p>
+    ${rhythmStrip(rh)}
+    <p class="small" style="margin-top:6px">${rh.stretched} of ${rh.intervals} syllables stretched (${Math.round(rh.share * 100)}%). ${rh.excess > 0 ? "That is more than in natural Polish reading — see “Even syllables” below." : "That is within the range of natural Polish reading."}</p></div>`;
 }
 
 function struggleList(words, limit = 12) {
@@ -514,10 +574,10 @@ function renderResults(root, r) {
       <div class="grid3" style="margin-top:14px">${sub}</div>
       ${r.overall == null ? `<p class="small muted" style="margin-top:10px">Not enough data for a score — read a little longer next time.</p>` : ""}
     </div>
-    <h3 style="margin:18px 2px 10px">Focus on</h3>
-    ${focusCards(r.recommendations || [])}
+    ${focusSection(r.recommendations || [], "reading")}
     <div class="card"><h3>Words to say clearer</h3>${struggleList(r.struggleWords || [])}</div>
     ${fluencyCard(r.fluency)}
+    ${ipaCard(r.phonemeStats, "reading")}
     ${coloured}
     ${rescore}
     ${transcript}
@@ -566,11 +626,50 @@ function openPattern(id) {
         ${p.minimalPairs.length && speechRecognitionSupported ? `<button class="btn small primary" type="button" data-action="pair-drill" data-id="${p.id}">Minimal-pair drill</button>` : ""}
         ${isVowel ? `<button class="btn small" type="button" data-action="goto-vowel-lab" data-v="${id === "y_i" ? "y" : id === "yakanie" ? "e" : "o"}">Open Vowel lab</button>` : ""}
       </div></div>
+    ${p.rhythmSentences ? `<div class="card" id="rhythmCheck"></div>` : ""}
     <div class="card"><h3>Practice words</h3><ul class="word-list">${p.practiceWords.map((w) => `<li><div class="wl-main"><div class="wl-word">${esc(w)}</div><div class="wl-sub">${esc(stressPattern(w))}</div></div>${speakBtn(w)} ${micBtn(w, p.id)}</li>`).join("")}</ul></div>
     <div class="card"><h3>Say it fast</h3><p style="font-family:Georgia,serif;font-size:1.1rem">${esc(p.twister)}</p>
       <div class="row">${speakBtn(p.twister, "Listen", "btn small")}${speechRecognitionSupported ? `<button class="btn small" type="button" data-action="read-twister" data-id="${p.id}">${ICON.mic} Read it</button>` : ""}</div></div>
   `);
+  if (p.rhythmSentences) mountRhythmCheck($("#rhythmCheck", body), p.rhythmSentences);
   body.scrollTop = 0;
+}
+
+/** Record one sentence and show its syllable lengths (evenness / “przeciąganie”). */
+function mountRhythmCheck(root, sentences) {
+  let idx = 0, analyzer = null;
+  const render = (result = "") => {
+    root.innerHTML = `<h3>Rhythm check</h3>
+      <p class="small muted">Read the sentence at your normal pace, then tap Stop. Even bars = Polish rhythm; highlighted bars = drawn-out syllables.</p>
+      <p style="font-family:Georgia,serif;font-size:1.15rem;margin:8px 0">${esc(sentences[idx])}</p>
+      <div class="row">${speakBtn(sentences[idx], "Listen", "btn small")}
+        <button class="btn small primary" type="button" id="rcRec">${analyzer ? `${ICON.stop} Stop` : `${ICON.mic} Record`}</button>
+        <button class="btn small" type="button" id="rcNext">Next sentence</button></div>
+      <div id="rcOut" style="margin-top:10px">${result}</div>`;
+    $("#rcNext", root).addEventListener("click", () => { stop(false); idx = (idx + 1) % sentences.length; render(); });
+    $("#rcRec", root).addEventListener("click", () => (analyzer ? stop(true) : start()));
+  };
+  async function start() {
+    analyzer = new AudioAnalyzer();
+    try { await analyzer.start(); } catch (e) { analyzer = null; toast("Microphone not available: " + e.message); return; }
+    render(`<p class="small muted">Recording… read the sentence.</p>`);
+  }
+  function stop(show) {
+    if (!analyzer) return;
+    const frames = analyzer.frames;
+    analyzer.stop();
+    analyzer = null;
+    if (!show) return;
+    const rh = analyzeRhythm(frames);
+    if (!rh) { render(`<div class="result-banner meh">Too short to measure — read the whole sentence in one go.</div>`); return; }
+    const verdict = rh.stretched === 0
+      ? `<div class="result-banner ok">Even rhythm ✓ — no drawn-out syllables.</div>`
+      : `<div class="result-banner ${rh.stretched <= 1 ? "meh" : "no"}">${rh.stretched} drawn-out syllable${rh.stretched === 1 ? "" : "s"} (≥${rh.stretchRatio}× your typical length). Keep the stressed syllable short — make it a little louder instead.</div>`;
+    render(`${verdict}${rhythmStrip(rh)}<p class="small muted" style="margin-top:6px">Evenness ${rh.evenness}/100 · typical syllable ${rh.median} ms</p>`);
+  }
+  render();
+  const prev = sheetCleanup;
+  sheetCleanup = () => { stop(false); if (prev) prev(); };
 }
 
 async function listenFor(target) {
@@ -705,7 +804,7 @@ function overallRecommendations() {
   for (const [id, a] of Object.entries(agg)) stats[id] = { opp: a.opp, err: a.err, sus: a.sus, examples: [] };
   // include examples from the latest sessions
   for (const s of sessions.slice(-15)) for (const [id, st] of Object.entries(s.patternStats || {})) if (stats[id] && st.examples) stats[id].examples.push(...st.examples);
-  return recommend(stats, langs(), 5);
+  return recommend(stats, langs(), 5, "recent");
 }
 
 function renderPractice() {
@@ -719,8 +818,8 @@ function renderPractice() {
   for (const p of relevantPatterns(langs())) (groups[p.category] ||= []).push(p);
   root.innerHTML = `
     <h2>Your focus</h2>
-    <p class="small muted">Ranked from your readings${store.getState().sessions.length ? "" : " (no readings yet — based on what is typical for " + langs().map((l) => NATIVE_LANGUAGES[l].name).join(" + ") + " speakers)"}.</p>
-    ${focusCards(recs)}
+    ${focusSection(recs, "recent")}
+    ${ipaCard(store.aggregatePhonemes(store.getState().sessions.slice(-15)), "recent")}
     <div class="card"><h3>Words to practise</h3>
       ${words.length ? `<ul class="word-list">${words.map(([w, d]) => `<li><div class="wl-main"><div class="wl-word">${esc(d.surface || w)} <span class="small muted">${esc(stressPattern(w))}</span></div>
         <div class="wl-sub">${d.fails} unclear · ${d.repeats || 0} repeats${d.heard && d.heard.length ? ` · heard “${d.heard.slice(0, 2).map(esc).join("”, “")}”` : ""}${d.okStreak ? ` · ${d.okStreak}/3 clear in a row` : ""}</div></div>

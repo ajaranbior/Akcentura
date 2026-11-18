@@ -93,11 +93,12 @@ export function wordSimilarity(a, b) {
   b = normalizeWord(b);
   if (!a || !b) return 0;
   if (a === b) return 1;
-  const sa = stripDiacritics(a), sb = stripDiacritics(b);
-  if (sa === sb) return 0.85;
-  // Compare on phoneme level so "rz" vs "ż" or "ch" vs "h" count as equal sounds.
+  // Compare on phoneme level so "rz" vs "ż", "ch" vs "h" or a final "ę" vs "e"
+  // (dziękuje / dziękuję — pronounced the same) count as equal sounds.
   const pa = g2p(a).map((t) => t.p), pb = g2p(b).map((t) => t.p);
   if (pa.join(" ") === pb.join(" ")) return 0.97;
+  const sa = stripDiacritics(a), sb = stripDiacritics(b);
+  if (sa === sb) return 0.85;
   const d = levenshtein(pa, pb);
   return Math.max(0, 1 - d / Math.max(pa.length, pb.length));
 }
@@ -150,6 +151,10 @@ export function g2p(word) {
       }
     }
     if (p === "ks") { out.push({ p: "k", letters: "x" }, { p: "s", letters: "" }); i += len; continue; }
+    // Standard pronunciation loses the nasality of a word-final ę (idę, proszę,
+    // dziękuję ≈ ide, prosze, dziękuje) and of ę/ą before l/ł (wzięła, wziął).
+    if (p === "en" && (i + len >= w.length || /^[lł]/.test(w[i + len]))) p = "e";
+    else if (p === "on" && /^[lł]/.test(w[i + len] || "")) p = "o";
     out.push({ p, letters: w.slice(i, i + len) });
     i += len;
   }

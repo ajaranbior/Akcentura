@@ -42,3 +42,53 @@ test("fluency summary from frames", () => {
   assert.ok(f.hesitations >= 8);
   assert.ok(f.score >= 0 && f.score <= 100);
 });
+
+import { analyzeRhythm } from "../js/audio.js";
+import { applyFluency, GuidedSession } from "../js/analyzer.js";
+
+// syllables as energy bumps; `lens` are syllable lengths in seconds, phrases separated by silence
+function syllableFrames(phrases) {
+  const frames = [];
+  let t = 0;
+  const push = (db, speech) => { frames.push({ t, db, speech, f0: speech ? 120 : null }); t += 0.02; };
+  for (const lens of phrases) {
+    for (const len of lens) {
+      const n = Math.round(len / 0.02);
+      for (let i = 0; i < n; i++) push(-40 + 14 * Math.sin((Math.PI * (i + 0.5)) / n), true);
+    }
+    for (let i = 0; i < 25; i++) push(-75, false);
+  }
+  return frames;
+}
+
+test("rhythm: even syllables vs drawn-out ones", () => {
+  const even = analyzeRhythm(syllableFrames(Array.from({ length: 3 }, () => Array(10).fill(0.2))));
+  assert.equal(even.stretched, 0);
+  assert.ok(even.evenness >= 85, `evenness ${even.evenness}`);
+  const drawn = analyzeRhythm(syllableFrames(Array.from({ length: 3 }, () => [0.18, 0.18, 0.45, 0.16, 0.18, 0.5, 0.17, 0.18, 0.18, 0.2])));
+  assert.ok(drawn.stretched >= 5, `stretched ${drawn.stretched}`);
+  assert.ok(drawn.excess > 0);
+  assert.ok(drawn.evenness < even.evenness - 20);
+  // a stretched syllable feeds the "even_syllables" finding
+  const r = new GuidedSession("Ala ma kota.", ["ru"]).report();
+  applyFluency(r, { score: 70, rhythm: { ...drawn, intervals: 24 } });
+  const rec = r.recommendations.find((x) => x.id === "even_syllables");
+  assert.ok(rec.found);
+  assert.match(rec.reason, /drawn out/);
+});
+
+import { measureWord, personalTargets as pt } from "../js/vowellab.js";
+
+test("word check gives each syllable's vowel in IPA", () => {
+  const t = pt("male", null);
+  // po-go-da: first o open [ɔ], second reduced towards [ɐ], then a
+  const vowels = [[520, 950], [640, 1230], [720, 1320]];
+  const frames = [];
+  let time = 0;
+  for (const [f1, f2] of vowels) {
+    for (let i = 0; i < 10; i++) { frames.push({ t: time, db: -40 + 14 * Math.sin((Math.PI * (i + 0.5)) / 10), speech: true, fm: { f1, f2 } }); time += 0.02; }
+  }
+  const res = measureWord(frames, "pogoda", t);
+  assert.deepEqual(res.syllables.map((s) => s.ipa), ["ɔ", "ɐ", "a"]);
+  assert.deepEqual(res.syllables.map((s) => s.ok), [true, false, true]);
+});

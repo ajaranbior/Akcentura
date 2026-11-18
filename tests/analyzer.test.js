@@ -73,3 +73,35 @@ test("recommendations fall back to native-language priors", () => {
   assert.ok(rec.length > 0);
   assert.ok(rec.every((r) => r.err === 0));
 });
+
+test("final ę is pronounced e: dziękuje / dziękuję are not a nasal error", async () => {
+  const { wordSimilarity } = await import("../js/polish.js");
+  assert.ok(wordSimilarity("dziękuje", "dziękuję") >= 0.97);
+  assert.ok(wordSimilarity("idę", "ide") >= 0.97);
+  assert.ok(wordSimilarity("idą", "ido") < 0.97); // final ą stays nasal
+  assert.deepEqual(ids("dziękuje", "dziękuję"), []);
+  assert.ok(!patternsInWord("proszę", ["ru"]).includes("nasals"));
+  assert.ok(patternsInWord("ręka", ["ru"]).includes("nasals"));
+});
+
+test("a different ending vowel is an ending issue, not a nasal one", () => {
+  assert.deepEqual(ids("sasza", "saszę"), ["endings"]);
+  assert.deepEqual(ids("robota", "roboty"), ["endings"]);
+  assert.deepEqual(ids("kot", "kat"), ["akanie"]);
+  assert.deepEqual(ids("idą", "idę"), ["nasals"]);
+});
+
+test("recommendations separate findings from general tips", () => {
+  const s = new GuidedSession("Ola ma nowy dom obok ogrodu.", ["be"]);
+  s.addPhrase("ala ma nowy dom abok ogrodu");
+  const r = s.report();
+  const found = r.recommendations.filter((x) => x.found);
+  assert.equal(found[0].id, "akanie");
+  assert.match(found[0].reason, /In this reading/);
+  const general = r.recommendations.filter((x) => !x.found);
+  assert.ok(general.length > 0 && general.every((x) => /general tip/.test(x.reason)));
+  // IPA sound map: the o in Ola and obok came out as a
+  assert.equal(r.phonemeStats.o.err, 2);
+  assert.ok(r.phonemeStats.o.as.a >= 1);
+  assert.equal(r.phonemeStats.m.err, 0);
+});

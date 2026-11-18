@@ -145,6 +145,20 @@ export function aggregatePatterns(sessions) {
   return agg;
 }
 
+/** Per-phoneme (IPA sound map) totals over sessions: {phone: {opp, err, as}} */
+export function aggregatePhonemes(sessions) {
+  const agg = {};
+  for (const sess of sessions) {
+    for (const [p, st] of Object.entries(sess.phonemeStats || {})) {
+      const a = (agg[p] ||= { opp: 0, err: 0, as: {} });
+      a.opp += st.opp;
+      a.err += st.err;
+      for (const [k, v] of Object.entries(st.as || {})) a.as[k] = (a.as[k] || 0) + v;
+    }
+  }
+  return agg;
+}
+
 export function exportData() {
   return JSON.stringify(getState(), null, 2);
 }

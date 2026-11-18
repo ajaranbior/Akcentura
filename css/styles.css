@@ -333,3 +333,22 @@ details.card[open] > summary::after { content: "▴"; }
   .score-hero { gap: 12px; }
   .ring { width: 96px; height: 96px; }
 }
+
+/* IPA sound map */
+.ipa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+.ipa-chip { background: var(--surface-2); border-radius: 10px; padding: 6px 8px; display: flex; flex-direction: column; min-width: 0; border: 1px solid transparent; }
+.ipa-chip .ipa { font-family: "Charis SIL", "Doulos SIL", Georgia, serif; font-size: 1.25rem; font-weight: 700; line-height: 1.2; }
+.ipa-chip .sp { font-size: 0.72rem; color: var(--muted); }
+.ipa-chip .pc { font-size: 0.72rem; color: var(--text-2); overflow-wrap: anywhere; }
+.ipa-chip.good { background: var(--good-soft); }
+.ipa-chip.warn { background: var(--warn-soft); }
+.ipa-chip.bad { background: var(--bad-soft); border-color: var(--bad); }
+
+/* syllable rhythm strip */
+.rhythm-strip { display: flex; flex-direction: column; gap: 4px; }
+.rh-row { display: flex; gap: 2px; height: 14px; }
+.rh-syl { background: var(--chart); border-radius: 3px; min-width: 3px; opacity: 0.55; }
+.rh-syl.long { background: var(--bad); opacity: 1; }
+.rh-key { display: inline-block; width: 14px; height: 9px; border-radius: 2px; vertical-align: middle; }
+.rh-key.long { background: var(--bad); }
+details.card > summary .small { font-weight: 400; }

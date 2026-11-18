@@ -171,6 +171,101 @@ function percentile(arr, p) {
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
+/** Frame indices of energy peaks ≈ syllable nuclei. */
+export function syllablePeaks(frames, dt = 0.02) {
+  const db = frames.map((f) => f.db);
+  const sm = db.map((_, i) => (db[Math.max(0, i - 1)] + db[i] + db[Math.min(db.length - 1, i + 1)]) / 3);
+  const peaks = [];
+  const w = Math.max(2, Math.round(0.12 / dt));
+  for (let i = 1; i < sm.length - 1; i++) {
+    if (!frames[i].speech) continue;
+    if (sm[i] >= sm[i - 1] && sm[i] > sm[i + 1]) {
+      // prominence: drop of ≥2.5 dB on both sides within 120 ms
+      let lmin = sm[i], rmin = sm[i];
+      for (let k = 1; k <= w; k++) {
+        if (i - k >= 0) lmin = Math.min(lmin, sm[i - k]);
+        if (i + k < sm.length) rmin = Math.min(rmin, sm[i + k]);
+      }
+      const last = peaks[peaks.length - 1];
+      if (sm[i] - lmin >= 2.5 && sm[i] - rmin >= 2.5 && (last === undefined || frames[i].t - frames[last].t >= 0.09)) peaks.push(i);
+    }
+  }
+  return peaks;
+}
+
+const STRETCH_RATIO = 1.75; // a syllable this many times longer than your typical one is "drawn out"
+const NATURAL_STRETCH_SHARE = 0.05; // some longer syllables happen in any natural reading
+
+/**
+ * Syllable evenness ("przeciąganie"). A syllable runs from the energy dip before its
+ * peak to the dip after it, so a drawn-out vowel makes its own syllable long. Peaks
+ * separated by silence belong to different phrases; the first syllable of a phrase
+ * (no dip before it) and the last one (slowing down before a pause is natural) are
+ * left out. Returns null without enough syllables.
+ *  - stretched: syllables ≥ STRETCH_RATIO × the median length (and ≥ 120 ms longer)
+ *  - excess:    stretched beyond what a natural reading has
+ *  - evenness:  0–100 (100 = metronome-even)
+ *  - phrases:   per phrase, each syllable's length relative to the median (for display)
+ */
+export function analyzeRhythm(frames, peakIdx = null) {
+  if (frames.length < 10) return null;
+  const dt = (frames[frames.length - 1].t - frames[0].t) / (frames.length - 1) || 0.02;
+  const peaks = peakIdx || syllablePeaks(frames, dt);
+  const db = frames.map((f) => f.db);
+  const sm = db.map((_, i) => (db[Math.max(0, i - 1)] + db[i] + db[Math.min(db.length - 1, i + 1)]) / 3);
+  // group peaks into phrases, with the valley between consecutive peaks
+  const groups = [];
+  let g = peaks.length ? { peaks: [peaks[0]], valleys: [] } : null;
+  for (let k = 1; k < peaks.length; k++) {
+    const a = peaks[k - 1], b = peaks[k];
+    let silent = 0, v = a;
+    for (let i = a; i <= b; i++) {
+      if (!frames[i].speech) silent++;
+      if (sm[i] < sm[v]) v = i;
+    }
+    if (frames[b].t - frames[a].t >= 0.8 || silent * dt >= 0.1) {
+      groups.push(g);
+      g = { peaks: [b], valleys: [] };
+    } else {
+      g.peaks.push(b);
+      g.valleys.push(v);
+    }
+  }
+  if (g) groups.push(g);
+  const phrases = [];
+  for (const gr of groups) {
+    // syllable j (1..n-2) spans valleys[j-1] .. valleys[j]
+    const ph = [];
+    for (let j = 1; j < gr.valleys.length; j++) ph.push(frames[gr.valleys[j]].t - frames[gr.valleys[j - 1]].t);
+    if (ph.length) phrases.push(ph);
+  }
+  const all = phrases.flat();
+  if (all.length < 6) return null;
+  const med = median(all);
+  const isLong = (d) => d >= STRETCH_RATIO * med && d - med >= 0.12;
+  const stretched = all.filter(isLong).length;
+  let s = 0, n = 0;
+  for (const ph of phrases) {
+    for (let i = 1; i < ph.length; i++) { s += Math.abs(ph[i] - ph[i - 1]) / ((ph[i] + ph[i - 1]) / 2); n++; }
+  }
+  const npvi = n ? (100 * s) / n : null;
+  const share = stretched / all.length;
+  const excess = Math.max(0, stretched - Math.round(NATURAL_STRETCH_SHARE * all.length));
+  const evenStretch = clamp01(1 - (share - NATURAL_STRETCH_SHARE) / 0.15);
+  const evenPvi = npvi != null ? clamp01(1 - (npvi - 40) / 35) : evenStretch;
+  return {
+    intervals: all.length,
+    median: Math.round(med * 1000),
+    stretched,
+    excess,
+    share: Math.round(share * 1000) / 1000,
+    npvi: npvi != null ? Math.round(npvi) : null,
+    evenness: Math.round(100 * (0.65 * evenStretch + 0.35 * evenPvi)),
+    phrases: phrases.slice(0, 8).map((ph) => ph.slice(0, 30).map((d) => Math.round((d / med) * 100) / 100)),
+    stretchRatio: STRETCH_RATIO,
+  };
+}
+
 /**
  * Summarises frames [{t, db, speech, f0}] (t in seconds) into fluency metrics.
  * `textSyllables` (from the recognised text) gives a more reliable pace if available.
@@ -199,43 +294,10 @@ export function computeFluency(frames, textSyllables = 0) {
   }
   const minutes = speakingTime / 60;
 
-  // energy peaks ≈ syllable nuclei
-  const db = frames.map((f) => f.db);
-  const sm = db.map((_, i) => (db[Math.max(0, i - 1)] + db[i] + db[Math.min(db.length - 1, i + 1)]) / 3);
-  const peakTimes = [];
-  let lastPeak = -1;
-  for (let i = 1; i < sm.length - 1; i++) {
-    if (!frames[i].speech) continue;
-    if (sm[i] >= sm[i - 1] && sm[i] > sm[i + 1]) {
-      // prominence: drop of ≥2.5 dB on both sides within 120 ms
-      const w = Math.max(2, Math.round(0.12 / dt));
-      let lmin = sm[i], rmin = sm[i];
-      for (let k = 1; k <= w; k++) {
-        if (i - k >= 0) lmin = Math.min(lmin, sm[i - k]);
-        if (i + k < sm.length) rmin = Math.min(rmin, sm[i + k]);
-      }
-      if (sm[i] - lmin >= 2.5 && sm[i] - rmin >= 2.5 && (lastPeak < 0 || frames[i].t - frames[lastPeak].t >= 0.09)) {
-        peakTimes.push(frames[i].t);
-        lastPeak = i;
-      }
-    }
-  }
-  const rate = textSyllables > 0 ? textSyllables / speakingTime : peakTimes.length / speakingTime;
-
-  // rhythm: nPVI of inter-peak intervals within runs
-  const intervals = [];
-  for (let i = 1; i < peakTimes.length; i++) {
-    const d = peakTimes[i] - peakTimes[i - 1];
-    if (d < 0.6) intervals.push(d);
-  }
-  let npvi = null;
-  if (intervals.length >= 8) {
-    let s = 0;
-    for (let i = 1; i < intervals.length; i++) {
-      s += Math.abs(intervals[i] - intervals[i - 1]) / ((intervals[i] + intervals[i - 1]) / 2);
-    }
-    npvi = (100 * s) / (intervals.length - 1);
-  }
+  const peakIdx = syllablePeaks(frames, dt);
+  const rate = textSyllables > 0 ? textSyllables / speakingTime : peakIdx.length / speakingTime;
+  const rhythm = analyzeRhythm(frames, peakIdx);
+  const npvi = rhythm ? rhythm.npvi : null;
 
   // melody: pitch spread in semitones (5–95 percentile, robust to octave errors)
   const st = frames.filter((f) => f.f0).map((f) => 12 * Math.log2(f.f0 / 100));
@@ -268,6 +330,7 @@ export function computeFluency(frames, textSyllables = 0) {
   parts.push([clamp01(1 - (hesitationRate - 8) / 22), 0.25]);
   if (pitchStd != null) parts.push([clamp01((pitchStd - 1.0) / (2.6 - 1.0)), 0.25]);
   if (trailing != null) parts.push([clamp01(1 - trailing * 1.5), 0.2]);
+  if (rhythm && rhythm.evenness != null) parts.push([rhythm.evenness / 100, 0.2]);
   const wsum = parts.reduce((s, p) => s + p[1], 0);
   const score = Math.round((100 * parts.reduce((s, p) => s + p[0] * p[1], 0)) / wsum);
 
@@ -282,6 +345,7 @@ export function computeFluency(frames, textSyllables = 0) {
     pitchRange: pitchRange != null ? Math.round(pitchRange * 10) / 10 : null,
     trailing: trailing != null ? Math.round(trailing * 100) / 100 : null,
     npvi: npvi != null ? Math.round(npvi) : null,
+    rhythm,
     score,
   };
 }
