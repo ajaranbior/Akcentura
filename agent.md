@@ -6,5 +6,5 @@
 
 ## Project notes
 - Plain HTML/CSS/JS ES modules, no build step, no dependencies. Tests: `node --test` (`npm test`).
-- Feedback shown to the learner must say whether it comes from *their* speech ("found in this reading")
-  or is only a general tip for their native language — never mix the two.
+- Feedback shown to the learner lists only what was found in *their* speech. Do not show patterns that are
+  merely "typical" for their native language (no "typical" / "general tips" items in results or focus lists).

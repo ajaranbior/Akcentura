@@ -470,21 +470,16 @@ function focusCard(r) {
     </div>`;
 }
 
-/** Findings from the learner's own speech first; native-language tips kept apart and collapsed. */
+/** Only what the learner's own speech showed; patterns that are merely common for their native language are not listed. */
 function focusSection(recs, scope = "reading") {
   const found = recs.filter((r) => r.found);
-  const general = recs.filter((r) => !r.found);
-  const who = langs().map((l) => NATIVE_LANGUAGES[l].name).join(" + ");
   const head = scope === "reading" ? "Found in this reading" : "Found in your recent readings";
   const none = scope === "reading"
-    ? "No accent pattern stood out in this reading — the recogniser understood the sounds it checks."
+    ? "Nothing to fix stood out in this reading. The sounds the app can check were understood."
     : "Nothing stands out yet. Read a few texts and your own patterns will appear here.";
   return `<h3 style="margin:18px 2px 4px">${head}</h3>
-    <p class="small muted" style="margin:0 2px 10px">Based on what the recogniser heard${scope === "reading" ? " and your audio" : ""} — these are about <i>your</i> pronunciation.</p>
-    ${found.length ? found.slice(0, 5).map(focusCard).join("") : `<div class="card tight small">${none}</div>`}
-    ${general.length ? `<details class="card tight"><summary>General tips for ${esc(who)} speakers <span class="small muted">(not found in your speech)</span></summary>
-      <p class="small muted" style="margin-top:8px">Common habits of ${esc(who)} speakers. Nothing in your recording pointed at them — read them as background, not as feedback.</p>
-      <ul class="word-list">${general.map((r) => { const p = PATTERN_BY_ID[r.id]; return `<li data-action="pattern" data-id="${p.id}" style="cursor:pointer"><span class="symbol">${esc(p.symbol)}</span><div class="wl-main"><div class="wl-word" style="font-size:1rem">${esc(p.title)}</div><div class="wl-sub">${esc(r.reason)}</div></div><span class="muted">›</span></li>`; }).join("")}</ul></details>` : ""}`;
+    <p class="small muted" style="margin:0 2px 10px">Based on what the recogniser heard${scope === "reading" ? " and your audio" : ""}. Only things that showed up in <i>your</i> speech are listed.</p>
+    ${found.length ? found.slice(0, 5).map(focusCard).join("") : `<div class="card tight small">${none}</div>`}`;
 }
 
 const IPA_GROUPS = [
